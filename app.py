@@ -1,5 +1,4 @@
 import requests
-import json
 
 API_KEY = "TU_API_KEY"
 
@@ -14,4 +13,6 @@ r = requests.get(
 )
 
 print("STATUS:", r.status_code)
-print(json.dumps(r.json(), indent=2, ensure_ascii=False))
+print("CONTENT-TYPE:", r.headers.get("Content-Type"))
+print("RESPUESTA:")
+print(r.text[:5000])
