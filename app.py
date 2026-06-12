@@ -3,7 +3,7 @@ import time
 import requests
 import pandas as pd
 
-API_KEY = os.getenv("9100d3646e618b7526417ada74853f620bcfa288")
+API_KEY = "9100d3646e618b7526417ada74853f620bcfa288"
 BASE_URL = "https://public-api.ringover.com/v2"
 
 HEADERS = {
