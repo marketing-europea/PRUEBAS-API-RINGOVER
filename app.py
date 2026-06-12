@@ -12,6 +12,8 @@ API_KEY = "9100d3646e618b7526417ada74853f620bcfa288"
 BASE_URL = "https://public-api.ringover.com/v2"
 HEADERS = {"Authorization": API_KEY}
 
+VENTAS_IVR_ID = 11861068
+
 st.title("KPIs Ringover - Ventas")
 
 fecha_inicio = st.date_input("Fecha inicio")
@@ -84,7 +86,7 @@ def get_calls(fecha_inicio, fecha_fin):
                 llamadas.append(call)
 
         progreso.write(
-            f"Revisando llamadas... offset {offset} | encontradas en rango: {len(llamadas)}"
+            f"Revisando llamadas... offset {offset} | llamadas en rango: {len(llamadas)}"
         )
 
         if len(batch) < limit:
@@ -103,7 +105,6 @@ def get_calls(fecha_inicio, fecha_fin):
 def normalizar_llamada(call):
     user = call.get("user") or {}
     ivr = call.get("ivr") or {}
-    "groups": call.get("groups"),
 
     user_id = user.get("user_id") or call.get("user_id")
 
@@ -124,6 +125,7 @@ def normalizar_llamada(call):
         "email": user.get("email"),
         "ivr_id": ivr.get("ivr_id"),
         "ivr_name": ivr.get("name"),
+        "groups": str(call.get("groups")),
         "direction": str(call.get("direction", "")).lower(),
         "is_answered": bool(call.get("is_answered")),
         "last_state": str(call.get("last_state", "")).upper(),
@@ -177,17 +179,14 @@ def obtener_manual(agente, df_manual):
 def contar_dias_tipo(fecha_inicio, fecha_fin, horario_id):
     dias = pd.date_range(fecha_inicio, fecha_fin, freq="D")
 
-    # Horarios con Día A lunes-jueves y Día B viernes
     if horario_id in [1, 3, 4, 6, 7]:
         dias_a = sum(d.weekday() in [0, 1, 2, 3] for d in dias)
         dias_b = sum(d.weekday() == 4 for d in dias)
 
-    # Toñi: lunes-viernes todo Día A
     elif horario_id == 2:
         dias_a = sum(d.weekday() in [0, 1, 2, 3, 4] for d in dias)
         dias_b = 0
 
-    # Solvo: lunes-sábado todo Día A
     elif horario_id == 5:
         dias_a = sum(d.weekday() in [0, 1, 2, 3, 4, 5] for d in dias)
         dias_b = 0
@@ -230,19 +229,27 @@ def calcular_kpis(llamadas_raw, ivr_name, fecha_inicio, fecha_fin, df_horarios, 
     df = pd.DataFrame([normalizar_llamada(c) for c in llamadas_raw])
 
     if df.empty:
-        return pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-    df_ventas = df[
+    # Llamadas que sí están claramente asociadas a Ventas.
+    df_ventas_referencia = df[
         (df["ivr_name"].fillna("").str.lower() == ivr_name.lower())
-        | (df["ivr_id"] == 11861068)
+        | (df["ivr_id"] == VENTAS_IVR_ID)
     ].copy()
 
-    if df_ventas.empty:
-        return pd.DataFrame(), df_ventas
+    # Agentes que han trabajado en Ventas durante el periodo.
+    agentes_ventas = set(df_ventas_referencia["user_id"].dropna().unique())
+
+    # Para cuadrar con Ringover: una vez detectado el agente de Ventas,
+    # calculamos todas sus llamadas del periodo, no solo las que traen ivr.name.
+    df_calculo = df[df["user_id"].isin(agentes_ventas)].copy()
+
+    if df_calculo.empty:
+        return pd.DataFrame(), df_ventas_referencia, df
 
     resultados = []
 
-    for (user_id, agente), sub in df_ventas.groupby(["user_id", "Agente"], dropna=False):
+    for (user_id, agente), sub in df_calculo.groupby(["user_id", "Agente"], dropna=False):
         entrantes = sub[sub["direction"].isin(["in", "incoming", "inbound"])]
         salientes = sub[sub["direction"].isin(["out", "outgoing", "outbound"])]
 
@@ -325,7 +332,7 @@ def calcular_kpis(llamadas_raw, ivr_name, fecha_inicio, fecha_fin, df_horarios, 
         "Mid time",
     ]
 
-    return kpis[columnas], df_ventas
+    return kpis[columnas], df_calculo, df_ventas_referencia
 
 
 if st.button("Generar KPIs"):
@@ -346,7 +353,7 @@ if st.button("Generar KPIs"):
 
     st.write("Llamadas descargadas en el rango:", len(llamadas_raw))
 
-    kpis, llamadas_ventas = calcular_kpis(
+    kpis, llamadas_calculo, llamadas_ventas_referencia = calcular_kpis(
         llamadas_raw,
         ivr_name,
         fecha_inicio,
@@ -359,14 +366,18 @@ if st.button("Generar KPIs"):
     st.subheader("KPIs Ventas")
     st.dataframe(kpis)
 
-    st.subheader("Llamadas Ventas")
-    st.dataframe(llamadas_ventas)
+    st.subheader("Llamadas usadas para cálculo")
+    st.dataframe(llamadas_calculo)
+
+    st.subheader("Llamadas con IVR Ventas")
+    st.dataframe(llamadas_ventas_referencia)
 
     output = BytesIO()
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         kpis.to_excel(writer, sheet_name="KPIs", index=False)
-        llamadas_ventas.to_excel(writer, sheet_name="Llamadas Ventas", index=False)
+        llamadas_calculo.to_excel(writer, sheet_name="Llamadas Calculo", index=False)
+        llamadas_ventas_referencia.to_excel(writer, sheet_name="IVR Ventas", index=False)
 
     st.download_button(
         "Descargar Excel",
