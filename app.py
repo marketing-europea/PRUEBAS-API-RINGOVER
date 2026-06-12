@@ -88,6 +88,7 @@ def get_calls(fecha_inicio, fecha_fin):
 
         offset += limit
         time.sleep(0.55)
+        st.write("LLAMADAS DESCARGADAS:", len(llamadas))
 
     return llamadas
 
