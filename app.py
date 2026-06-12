@@ -45,21 +45,24 @@ def get_calls(fecha_inicio, fecha_fin):
     offset = 0
     limit = 100
 
-    inicio_dt = datetime.combine(fecha_inicio, dtime.min).replace(tzinfo=timezone.utc)
-    fin_dt = datetime.combine(fecha_fin, dtime.max).replace(tzinfo=timezone.utc)
-
-    progreso = st.empty()
+    filtro = f"start_time:{fecha_inicio}T00:00:00Z..{fecha_fin}T23:59:59Z ivr_id:{VENTAS_IVR_ID}"
 
     while True:
+        params = {
+            "limit_count": limit,
+            "limit_offset": offset,
+            "filter": filtro,
+        }
+
         r = requests.get(
             f"{BASE_URL}/calls",
             headers=HEADERS,
-            params={
-                "limit_count": limit,
-                "limit_offset": offset,
-            },
+            params=params,
             timeout=30
         )
+
+        st.write("URL:", r.url)
+        st.write("STATUS:", r.status_code)
 
         if r.status_code != 200:
             st.error(f"Error Ringover {r.status_code}")
@@ -68,30 +71,23 @@ def get_calls(fecha_inicio, fecha_fin):
 
         data = r.json()
         batch = data.get("call_list", [])
-        total = data.get("total_call_count", 0)
+
+        st.write("TOTAL API:", data.get("total_call_count"))
+        st.write("BATCH:", len(batch))
+        st.write("OFFSET:", offset)
 
         if not batch:
             break
 
-        for call in batch:
-            start_time = parse_fecha_ringover(call.get("start_time"))
+        llamadas.extend(batch)
 
-            if start_time and inicio_dt <= start_time <= fin_dt:
-                llamadas.append(call)
-
-        progreso.write(
-            f"Descargando llamadas... offset {offset} / total {total} | en rango: {len(llamadas)}"
-        )
-
-        offset += limit
-
-        # IMPORTANTE: no cortar por fechas, porque Ringover no siempre devuelve orden perfecto
-        if offset >= total:
+        if len(batch) < limit:
             break
 
+        offset += limit
         time.sleep(0.55)
 
-    progreso.empty()
+    st.write("LLAMADAS DESCARGADAS:", len(llamadas))
     return llamadas
 
 def normalizar_llamada(call):
