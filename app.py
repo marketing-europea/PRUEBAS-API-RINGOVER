@@ -103,6 +103,7 @@ def get_calls(fecha_inicio, fecha_fin):
 def normalizar_llamada(call):
     user = call.get("user") or {}
     ivr = call.get("ivr") or {}
+    "groups": call.get("groups"),
 
     user_id = user.get("user_id") or call.get("user_id")
 
@@ -232,7 +233,8 @@ def calcular_kpis(llamadas_raw, ivr_name, fecha_inicio, fecha_fin, df_horarios, 
         return pd.DataFrame(), pd.DataFrame()
 
     df_ventas = df[
-        df["ivr_name"].fillna("").str.lower() == ivr_name.lower()
+        (df["ivr_name"].fillna("").str.lower() == ivr_name.lower())
+        | (df["ivr_id"] == 11861068)
     ].copy()
 
     if df_ventas.empty:
