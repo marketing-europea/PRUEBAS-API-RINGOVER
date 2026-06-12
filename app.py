@@ -1,16 +1,25 @@
+# pip install requests pandas openpyxl python-dotenv
+
 import os
 import time
 import requests
 import pandas as pd
 
 API_KEY = "9100d3646e618b7526417ada74853f620bcfa288"
+
+# Para probar rápido, puedes ponerla directa:
+# API_KEY = "TU_API_KEY"
+
 BASE_URL = "https://public-api.ringover.com/v2"
+
+if not API_KEY:
+    raise ValueError("No tienes API_KEY. Define RINGOVER_API_KEY o pon API_KEY = 'TU_API_KEY'.")
 
 HEADERS = {
     "Authorization": API_KEY
 }
 
-def get_json(endpoint, params=None):
+def get_json(endpoint, params=None, fallar=True):
     url = f"{BASE_URL}{endpoint}"
 
     r = requests.get(
@@ -22,16 +31,23 @@ def get_json(endpoint, params=None):
 
     print("URL:", r.url)
     print("STATUS:", r.status_code)
-    print("RESPUESTA:", r.text[:2000])
 
-    r.raise_for_status()
+    if r.status_code >= 400:
+        print("RESPUESTA ERROR:", r.text[:2000])
+        if fallar:
+            r.raise_for_status()
+        return None
+
     return r.json()
 
-def buscar_grupo(nombre_grupo="Ventas"):
+def obtener_agentes_desde_groups(nombre_grupo="Ventas"):
     data = get_json("/groups", {
         "limit_count": 1000,
         "limit_offset": 0
-    })
+    }, fallar=False)
+
+    if not data:
+        return pd.DataFrame()
 
     grupos = data.get("list") or data.get("groups") or data.get("data") or []
 
@@ -39,20 +55,25 @@ def buscar_grupo(nombre_grupo="Ventas"):
     for g in grupos:
         print(g.get("group_id") or g.get("id"), "-", g.get("name"))
 
-    for grupo in grupos:
-        if grupo.get("name", "").strip().lower() == nombre_grupo.strip().lower():
-            return grupo
+    grupo = None
 
-    raise ValueError(f"No he encontrado el grupo: {nombre_grupo}")
+    for g in grupos:
+        if str(g.get("name", "")).strip().lower() == nombre_grupo.strip().lower():
+            grupo = g
+            break
 
-def obtener_agentes_del_grupo(nombre_grupo="Ventas"):
-    grupo = buscar_grupo(nombre_grupo)
+    if not grupo:
+        print(f"No se encontró el grupo {nombre_grupo}.")
+        return pd.DataFrame()
 
     group_id = grupo.get("group_id") or grupo.get("id")
 
-    data = get_json(f"/groups/{group_id}")
+    detalle = get_json(f"/groups/{group_id}", fallar=False)
 
-    usuarios = data.get("users") or data.get("members") or []
+    if not detalle:
+        return pd.DataFrame()
+
+    usuarios = detalle.get("users") or detalle.get("members") or []
 
     filas = []
 
@@ -66,17 +87,81 @@ def obtener_agentes_del_grupo(nombre_grupo="Ventas"):
         )
 
         if not nombre:
-            nombre = u.get("name") or u.get("email") or str(user_id)
+            nombre = u.get("name") or u.get("email") or f"Usuario {user_id}"
 
         filas.append({
             "user_id": user_id,
             "name": nombre,
             "email": u.get("email"),
             "group_id": group_id,
-            "group_name": data.get("name") or grupo.get("name")
+            "group_name": grupo.get("name")
         })
 
     return pd.DataFrame(filas).drop_duplicates(subset=["user_id"])
+
+def obtener_agentes_desde_teams():
+    data = get_json("/teams", fallar=True)
+
+    print("Claves de /teams:", list(data.keys()))
+
+    filas = []
+
+    # Caso bueno: /teams trae users
+    users = data.get("users") or data.get("members") or []
+
+    for u in users:
+        user_id = u.get("user_id") or u.get("id")
+
+        nombre = " ".join(
+            str(x).strip()
+            for x in [u.get("firstname"), u.get("lastname")]
+            if x
+        )
+
+        if not nombre:
+            nombre = u.get("name") or u.get("email") or f"Usuario {user_id}"
+
+        filas.append({
+            "user_id": user_id,
+            "name": nombre,
+            "email": u.get("email"),
+            "origen": "teams_users"
+        })
+
+    # Caso alternativo: solo trae numbers, sin nombres
+    if not filas:
+        numbers = data.get("numbers", [])
+
+        for n in numbers:
+            user_id = n.get("user_id")
+
+            if user_id is not None:
+                telefono = n.get("format", {}).get("international")
+
+                filas.append({
+                    "user_id": user_id,
+                    "name": n.get("label") or f"Usuario {user_id}",
+                    "email": None,
+                    "telefono": telefono,
+                    "origen": "teams_numbers"
+                })
+
+    return pd.DataFrame(filas).drop_duplicates(subset=["user_id"])
+
+def obtener_agentes_ventas(nombre_grupo="Ventas"):
+    df = obtener_agentes_desde_groups(nombre_grupo)
+
+    if not df.empty:
+        print("Agentes obtenidos desde /groups")
+        return df
+
+    print("No se pudo usar /groups. Probando /teams...")
+    df = obtener_agentes_desde_teams()
+
+    if df.empty:
+        raise ValueError("No se han encontrado usuarios ni en /groups ni en /teams.")
+
+    return df
 
 def get_calls(fecha_inicio: str, fecha_fin: str):
     llamadas = []
@@ -97,6 +182,9 @@ def get_calls(fecha_inicio: str, fecha_fin: str):
             params=params,
             timeout=30
         )
+
+        print("CALLS STATUS:", response.status_code)
+
         response.raise_for_status()
         data = response.json()
 
@@ -159,21 +247,28 @@ def calcular_kpis(fecha_inicio, fecha_fin, agentes_ventas):
 
         sub = df[df["user_id"] == user_id] if not df.empty else pd.DataFrame()
 
-        entrantes = sub[sub["direction"].isin(["in", "incoming", "inbound"])]
-        salientes = sub[sub["direction"].isin(["out", "outgoing", "outbound"])]
+        if sub.empty:
+            llamadas_in = 0
+            llamadas_out = 0
+            conectadas = 0
+            tiempo_in = 0
+            tiempo_out = 0
+        else:
+            entrantes = sub[sub["direction"].isin(["in", "incoming", "inbound"])]
+            salientes = sub[sub["direction"].isin(["out", "outgoing", "outbound"])]
 
-        contestadas = sub[sub["status"].isin([
-            "ANSWERED",
-            "CALL_ANSWERED",
-            "COMPLETED"
-        ])]
+            contestadas = sub[sub["status"].isin([
+                "ANSWERED",
+                "CALL_ANSWERED",
+                "COMPLETED"
+            ])]
 
-        llamadas_in = len(entrantes)
-        llamadas_out = len(salientes)
-        conectadas = len(contestadas)
+            llamadas_in = len(entrantes)
+            llamadas_out = len(salientes)
+            conectadas = len(contestadas)
 
-        tiempo_in = entrantes["duration_min"].sum() if not entrantes.empty else 0
-        tiempo_out = salientes["duration_min"].sum() if not salientes.empty else 0
+            tiempo_in = entrantes["duration_min"].sum()
+            tiempo_out = salientes["duration_min"].sum()
 
         horas = cfg["horas"]
         polizas = cfg["polizas"]
@@ -183,6 +278,7 @@ def calcular_kpis(fecha_inicio, fecha_fin, agentes_ventas):
 
         resultados.append({
             "Agente": nombre,
+            "user_id": user_id,
             "Días A": cfg["dias_a"],
             "Días B": cfg["dias_b"],
             "Horas": horas,
@@ -202,7 +298,10 @@ def calcular_kpis(fecha_inicio, fecha_fin, agentes_ventas):
     return pd.DataFrame(resultados)
 
 if __name__ == "__main__":
-    df_agentes = obtener_agentes_del_grupo("Ventas")
+    fecha_inicio = "2026-05-01"
+    fecha_fin = "2026-05-31"
+
+    df_agentes = obtener_agentes_ventas("Ventas")
 
     print("Agentes encontrados:")
     print(df_agentes)
@@ -217,9 +316,6 @@ if __name__ == "__main__":
         }
         for _, row in df_agentes.iterrows()
     }
-
-    fecha_inicio = "2026-05-01"
-    fecha_fin = "2026-05-31"
 
     kpis = calcular_kpis(fecha_inicio, fecha_fin, AGENTES_VENTAS)
 
