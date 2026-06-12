@@ -44,14 +44,22 @@ def get_calls(fecha_inicio, fecha_fin):
     offset = 0
     limit = 100
 
-    inicio_dt = datetime.combine(fecha_inicio, dtime.min).replace(tzinfo=timezone.utc)
-    fin_dt = datetime.combine(fecha_fin, dtime.max).replace(tzinfo=timezone.utc)
+    filtro = (
+        f"start_time>={fecha_inicio}T00:00:00Z;"
+        f"start_time<={fecha_fin}T23:59:59Z"
+    )
 
     while True:
+        params = {
+            "limit_count": limit,
+            "limit_offset": offset,
+            "filter": filtro,
+        }
+
         r = requests.get(
             f"{BASE_URL}/calls",
             headers=HEADERS,
-            params={"limit_count": limit, "limit_offset": offset},
+            params=params,
             timeout=30
         )
 
@@ -61,37 +69,25 @@ def get_calls(fecha_inicio, fecha_fin):
             st.stop()
 
         data = r.json()
-
-        st.write("KEYS:", list(data.keys()))
-        st.write("TOTAL CALL COUNT:", data.get("total_call_count"))
-        st.write("CALL LIST COUNT:", data.get("call_list_count"))
-        st.write("OFFSET:", offset)
-
         batch = data.get("call_list", [])
+
+        st.write("OFFSET:", offset)
+        st.write("TOTAL:", data.get("total_call_count"))
+        st.write("BATCH:", len(batch))
 
         if not batch:
             break
 
-        parar = False
+        llamadas.extend(batch)
 
-        for call in batch:
-            start_time = parse_fecha_ringover(call.get("start_time"))
-
-            if start_time and inicio_dt <= start_time <= fin_dt:
-                llamadas.append(call)
-
-            if start_time and start_time < inicio_dt:
-                parar = True
-
-        if parar or len(batch) < limit:
+        if len(batch) < limit:
             break
 
         offset += limit
         time.sleep(0.55)
-        st.write("LLAMADAS DESCARGADAS:", len(llamadas))
 
+    st.write("LLAMADAS DESCARGADAS:", len(llamadas))
     return llamadas
-
 
 def normalizar_llamada(call):
     user = call.get("user") or {}
