@@ -1,10 +1,7 @@
-# pip install requests pandas openpyxl python-dotenv
-
 import os
 import time
 import requests
 import pandas as pd
-from datetime import date
 
 API_KEY = os.getenv("RINGOVER_API_KEY")
 BASE_URL = "https://public-api.ringover.com/v2"
@@ -13,25 +10,68 @@ HEADERS = {
     "Authorization": API_KEY
 }
 
-df_agentes = obtener_agentes_del_grupo("Ventas")
+def get_json(endpoint, params=None):
+    r = requests.get(
+        f"{BASE_URL}{endpoint}",
+        headers=HEADERS,
+        params=params or {},
+        timeout=30
+    )
+    r.raise_for_status()
+    return r.json()
 
-AGENTES_VENTAS = {
-    row["name"]: {
-        "user_id": row["user_id"],
-        "dias_a": 0,
-        "dias_b": 0,
-        "horas": 0,
-        "polizas": 0
-    }
-    for _, row in df_agentes.iterrows()
-}
+def buscar_grupo(nombre_grupo="Ventas"):
+    data = get_json("/groups", {
+        "limit_count": 1000,
+        "limit_offset": 0
+    })
+
+    grupos = data.get("list") or data.get("groups") or data.get("data") or []
+
+    print("Grupos encontrados:")
+    for g in grupos:
+        print(g.get("group_id") or g.get("id"), "-", g.get("name"))
+
+    for grupo in grupos:
+        if grupo.get("name", "").strip().lower() == nombre_grupo.strip().lower():
+            return grupo
+
+    raise ValueError(f"No he encontrado el grupo: {nombre_grupo}")
+
+def obtener_agentes_del_grupo(nombre_grupo="Ventas"):
+    grupo = buscar_grupo(nombre_grupo)
+
+    group_id = grupo.get("group_id") or grupo.get("id")
+
+    data = get_json(f"/groups/{group_id}")
+
+    usuarios = data.get("users") or data.get("members") or []
+
+    filas = []
+
+    for u in usuarios:
+        user_id = u.get("user_id") or u.get("id")
+
+        nombre = " ".join(
+            str(x).strip()
+            for x in [u.get("firstname"), u.get("lastname")]
+            if x
+        )
+
+        if not nombre:
+            nombre = u.get("name") or u.get("email") or str(user_id)
+
+        filas.append({
+            "user_id": user_id,
+            "name": nombre,
+            "email": u.get("email"),
+            "group_id": group_id,
+            "group_name": data.get("name") or grupo.get("name")
+        })
+
+    return pd.DataFrame(filas).drop_duplicates(subset=["user_id"])
 
 def get_calls(fecha_inicio: str, fecha_fin: str):
-    """
-    Descarga llamadas entre dos fechas.
-    Formato esperado: YYYY-MM-DD.
-    Ajusta los nombres de los filtros de fecha si tu endpoint Ringover los llama distinto.
-    """
     llamadas = []
     offset = 0
     limit = 100
@@ -100,15 +140,16 @@ def normalizar_llamada(call):
         "duration_min": segundos_a_minutos(duracion_seg),
     }
 
-def calcular_kpis(fecha_inicio, fecha_fin):
+def calcular_kpis(fecha_inicio, fecha_fin, agentes_ventas):
     llamadas_raw = get_calls(fecha_inicio, fecha_fin)
     llamadas = [normalizar_llamada(c) for c in llamadas_raw]
     df = pd.DataFrame(llamadas)
 
     resultados = []
 
-    for nombre, cfg in AGENTES_VENTAS.items():
+    for nombre, cfg in agentes_ventas.items():
         user_id = cfg["user_id"]
+
         sub = df[df["user_id"] == user_id] if not df.empty else pd.DataFrame()
 
         entrantes = sub[sub["direction"].isin(["in", "incoming", "inbound"])]
@@ -149,46 +190,34 @@ def calcular_kpis(fecha_inicio, fecha_fin):
             "Pólizas": polizas,
             "Pólizas/h": polizas / horas if horas else 0,
             "Calls/h": total_llamadas / horas if horas else 0,
-            "Mid time in": tiempo_in / llamadas_in if llamadas_in else 0,
-            "Mid time out": tiempo_out / llamadas_out if llamadas_out else 0,
-            "Mid time": total_tiempo / total_llamadas if total_llamadas else 0,
         })
 
     return pd.DataFrame(resultados)
 
-def calcular_variable(valor_w4, tramos):
-    """
-    Equivale a:
-    =SI(W4<W29;"No variable"; SI(W4<W28;85%; ... ;170%))
-    tramos debe ir de menor a mayor.
-    """
-    if valor_w4 < tramos["W29"]:
-        return "No variable"
-    if valor_w4 < tramos["W28"]:
-        return "85%"
-    if valor_w4 < tramos["W27"]:
-        return "100%"
-    if valor_w4 < tramos["W26"]:
-        return "110%"
-    if valor_w4 < tramos["W25"]:
-        return "120%"
-    if valor_w4 < tramos["W24"]:
-        return "130%"
-    if valor_w4 < tramos["W23"]:
-        return "140%"
-    if valor_w4 < tramos["W22"]:
-        return "150%"
-    if valor_w4 < tramos["W21"]:
-        return "160%"
-    return "170%"
-
 if __name__ == "__main__":
+    df_agentes = obtener_agentes_del_grupo("Ventas")
+
+    print("Agentes encontrados:")
+    print(df_agentes)
+
+    AGENTES_VENTAS = {
+        row["name"]: {
+            "user_id": row["user_id"],
+            "dias_a": 0,
+            "dias_b": 0,
+            "horas": 0,
+            "polizas": 0
+        }
+        for _, row in df_agentes.iterrows()
+    }
+
     fecha_inicio = "2026-05-01"
     fecha_fin = "2026-05-31"
 
-    kpis = calcular_kpis(fecha_inicio, fecha_fin)
+    kpis = calcular_kpis(fecha_inicio, fecha_fin, AGENTES_VENTAS)
 
     with pd.ExcelWriter("kpis_ringover_ventas.xlsx", engine="openpyxl") as writer:
+        df_agentes.to_excel(writer, sheet_name="Agentes Ventas", index=False)
         kpis.to_excel(writer, sheet_name="KPIs", index=False)
 
     print(kpis)
