@@ -19,8 +19,8 @@ fecha_inicio = st.date_input("Fecha inicio")
 fecha_fin = st.date_input("Fecha fin")
 ivr_name = st.text_input("Centralita / IVR", value="Ventas")
 
-config_file = st.file_uploader("Subir config_horarios_ringover.xlsx", type=["xlsx"])
-manual_file = st.file_uploader("Subir plantilla_datos_manuales_ringover.xlsx", type=["xlsx"])
+config_file = st.file_uploader("Subir config_horarios_simple.xlsx", type=["xlsx"])
+manual_file = st.file_uploader("Subir plantilla_datos_mensuales.xlsx", type=["xlsx"])
 
 
 def normalizar(texto):
@@ -37,15 +37,6 @@ def parse_fecha_ringover(valor):
     if not valor:
         return None
     return datetime.fromisoformat(valor.replace("Z", "+00:00"))
-
-
-def contar_dias_periodo(fecha_inicio, fecha_fin):
-    dias = pd.date_range(fecha_inicio, fecha_fin, freq="D")
-    return {
-        "lun_jue": sum(d.weekday() in [0, 1, 2, 3] for d in dias),
-        "viernes": sum(d.weekday() == 4 for d in dias),
-        "sabado": sum(d.weekday() == 5 for d in dias),
-    }
 
 
 def get_calls(fecha_inicio, fecha_fin):
@@ -151,44 +142,69 @@ def obtener_manual(agente, df_manual):
     row = buscar_match_agente(agente, df_manual)
 
     if row is None:
-        return {"dias_a": 0, "dias_b": 0, "polizas": 0}
+        return {"vacaciones_a": 0, "vacaciones_b": 0, "polizas": 0}
 
     return {
-        "dias_a": float(row.get("dias_a", 0) or 0),
-        "dias_b": float(row.get("dias_b", 0) or 0),
+        "vacaciones_a": float(row.get("vacaciones_a", 0) or 0),
+        "vacaciones_b": float(row.get("vacaciones_b", 0) or 0),
         "polizas": float(row.get("polizas", 0) or 0),
     }
+
+
+def contar_dias_tipo(fecha_inicio, fecha_fin, horario_id):
+    dias = pd.date_range(fecha_inicio, fecha_fin, freq="D")
+
+    if horario_id in [1, 3, 4, 6, 7]:
+        dias_a = sum(d.weekday() in [0, 1, 2, 3] for d in dias)
+        dias_b = sum(d.weekday() == 4 for d in dias)
+
+    elif horario_id == 2:
+        dias_a = sum(d.weekday() in [0, 1, 2, 3, 4] for d in dias)
+        dias_b = 0
+
+    elif horario_id == 5:
+        dias_a = sum(d.weekday() in [0, 1, 2, 3, 4, 5] for d in dias)
+        dias_b = 0
+
+    else:
+        dias_a = 0
+        dias_b = 0
+
+    return dias_a, dias_b
 
 
 def calcular_horas(agente, fecha_inicio, fecha_fin, df_horarios, df_agentes_horario, df_manual):
     horario_id = asignar_horario(agente, df_agentes_horario)
 
     if horario_id is None:
-        return 0, None, 0, 0
+        return 0, None, 0, 0, 0, 0
 
     horario_filtrado = df_horarios[df_horarios["horario_id"] == horario_id]
 
     if horario_filtrado.empty:
-        return 0, horario_id, 0, 0
+        return 0, horario_id, 0, 0, 0, 0
 
     horario = horario_filtrado.iloc[0]
     manual = obtener_manual(agente, df_manual)
-    dias = contar_dias_periodo(fecha_inicio, fecha_fin)
 
-    horas_teoricas = (
-        dias["lun_jue"] * float(horario["horas_lun_jue"])
-        + dias["viernes"] * float(horario["horas_viernes"])
-        + dias["sabado"] * float(horario["horas_sabado"])
+    dias_a_mes, dias_b_mes = contar_dias_tipo(fecha_inicio, fecha_fin, horario_id)
+
+    dias_a = max(dias_a_mes - manual["vacaciones_a"], 0)
+    dias_b = max(dias_b_mes - manual["vacaciones_b"], 0)
+
+    horas = (
+        dias_a * float(horario["horas_dia_a"])
+        + dias_b * float(horario["horas_dia_b"])
     )
 
-    horas_vacaciones = (
-        manual["dias_a"] * float(horario["horas_dia_a"])
-        + manual["dias_b"] * float(horario["horas_dia_b"])
+    return (
+        horas,
+        horario_id,
+        dias_a,
+        dias_b,
+        manual["vacaciones_a"],
+        manual["vacaciones_b"],
     )
-
-    horas = max(horas_teoricas - horas_vacaciones, 0)
-
-    return horas, horario_id, manual["dias_a"], manual["dias_b"]
 
 
 def calcular_kpis(llamadas_raw, ivr_name, fecha_inicio, fecha_fin, df_horarios, df_agentes_horario, df_manual):
@@ -225,7 +241,7 @@ def calcular_kpis(llamadas_raw, ivr_name, fecha_inicio, fecha_fin, df_horarios, 
         total_llamadas = call_in + call_out
         total_tiempo = time_in + time_out
 
-        horas, horario_id, dias_a, dias_b = calcular_horas(
+        horas, horario_id, dias_a, dias_b, vacaciones_a, vacaciones_b = calcular_horas(
             agente,
             fecha_inicio,
             fecha_fin,
@@ -241,6 +257,8 @@ def calcular_kpis(llamadas_raw, ivr_name, fecha_inicio, fecha_fin, df_horarios, 
             "Agente": agente,
             "user_id": user_id,
             "horario_id": horario_id,
+            "Vacaciones A": vacaciones_a,
+            "Vacaciones B": vacaciones_b,
             "Días A": dias_a,
             "Días B": dias_b,
             "Horas": horas,
