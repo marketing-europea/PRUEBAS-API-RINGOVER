@@ -9,7 +9,7 @@ import streamlit as st
 
 
 API_KEY = "9100d3646e618b7526417ada74853f620bcfa288"
-BASE_URL = "https://public-api.ringover.com/v2/calls/list"
+BASE_URL = "https://public-api.ringover.com/v2"
 HEADERS = {"Authorization": API_KEY}
 
 VENTAS_IVR_ID = 11861068
@@ -45,48 +45,53 @@ def get_calls(fecha_inicio, fecha_fin):
     offset = 0
     limit = 100
 
-    while True:
-        payload = {
-            "limit_count": limit,
-            "limit_offset": offset,
-            "start_date": f"{fecha_inicio}T00:00:00Z",
-            "end_date": f"{fecha_fin}T23:59:59Z",
-            "ivrs": [11861068]
-        }
+    inicio_dt = datetime.combine(fecha_inicio, dtime.min).replace(tzinfo=timezone.utc)
+    fin_dt = datetime.combine(fecha_fin, dtime.max).replace(tzinfo=timezone.utc)
 
-        r = requests.post(
-            f"{BASE_URL}/calls/list",
-            headers={
-                "Authorization": API_KEY,
-                "Content-Type": "application/json"
+    progreso = st.empty()
+
+    while True:
+        r = requests.get(
+            f"{BASE_URL}/calls",
+            headers=HEADERS,
+            params={
+                "limit_count": limit,
+                "limit_offset": offset,
             },
-            json=payload,
             timeout=30
         )
 
-        st.write("STATUS:", r.status_code)
-        st.write("RESP:", r.text[:500])
-
         if r.status_code != 200:
             st.error(f"Error Ringover {r.status_code}")
+            st.text(r.text[:3000])
             st.stop()
 
         data = r.json()
         batch = data.get("call_list", [])
+        total_api = data.get("total_call_count", 0)
 
         if not batch:
             break
 
-        llamadas.extend(batch)
+        for call in batch:
+            start_time = parse_fecha_ringover(call.get("start_time"))
+            if start_time and inicio_dt <= start_time <= fin_dt:
+                llamadas.append(call)
 
-        if len(batch) < limit:
-            break
+        progreso.write(
+            f"Descargando llamadas... offset {offset} / total API {total_api} | en rango: {len(llamadas)}"
+        )
 
         offset += limit
+
+        if offset >= total_api:
+            break
+
         time.sleep(0.55)
 
-    st.write("Llamadas descargadas:", len(llamadas))
+    progreso.empty()
     return llamadas
+
 
 def normalizar_llamada(call):
     user = call.get("user") or {}
@@ -168,15 +173,12 @@ def contar_dias_tipo(fecha_inicio, fecha_fin, horario_id):
     if horario_id in [1, 3, 4, 6, 7]:
         dias_a = sum(d.weekday() in [0, 1, 2, 3] for d in dias)
         dias_b = sum(d.weekday() == 4 for d in dias)
-
     elif horario_id == 2:
         dias_a = sum(d.weekday() in [0, 1, 2, 3, 4] for d in dias)
         dias_b = 0
-
     elif horario_id == 5:
         dias_a = sum(d.weekday() in [0, 1, 2, 3, 4, 5] for d in dias)
         dias_b = 0
-
     else:
         dias_a = 0
         dias_b = 0
@@ -217,17 +219,13 @@ def calcular_kpis(llamadas_raw, ivr_name, fecha_inicio, fecha_fin, df_horarios, 
     if df.empty:
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-    # Llamadas que sí están claramente asociadas a Ventas.
     df_ventas_referencia = df[
         (df["ivr_name"].fillna("").str.lower() == ivr_name.lower())
         | (df["ivr_id"] == VENTAS_IVR_ID)
     ].copy()
 
-    # Agentes que han trabajado en Ventas durante el periodo.
     agentes_ventas = set(df_ventas_referencia["user_id"].dropna().unique())
 
-    # Para cuadrar con Ringover: una vez detectado el agente de Ventas,
-    # calculamos todas sus llamadas del periodo, no solo las que traen ivr.name.
     df_calculo = df[df["user_id"].isin(agentes_ventas)].copy()
 
     if df_calculo.empty:
@@ -295,30 +293,7 @@ def calcular_kpis(llamadas_raw, ivr_name, fecha_inicio, fecha_fin, df_horarios, 
 
     kpis = pd.DataFrame(resultados).sort_values("Agente")
 
-    columnas = [
-        "Agente",
-        "user_id",
-        "horario_id",
-        "Vacaciones A",
-        "Vacaciones B",
-        "Días A",
-        "Días B",
-        "Horas",
-        "Call in",
-        "Call out",
-        "Conectadas",
-        "Contactab.",
-        "Time in",
-        "Time out",
-        "Contestadas",
-        "Mid Calls",
-        "Pólizas",
-        "Índice efectividad",
-        "Índice productividad",
-        "Mid time",
-    ]
-
-    return kpis[columnas], df_calculo, df_ventas_referencia
+    return kpis, df_calculo, df_ventas_referencia
 
 
 if st.button("Generar KPIs"):
