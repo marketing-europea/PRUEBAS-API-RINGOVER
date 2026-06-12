@@ -45,12 +45,18 @@ def get_calls(fecha_inicio, fecha_fin):
     offset = 0
     limit = 100
 
+    filtro = {
+        "start_time": {
+            "from": f"{fecha_inicio}T00:00:00Z",
+            "to": f"{fecha_fin}T23:59:59Z"
+        }
+    }
+
     while True:
         params = {
             "limit_count": limit,
             "limit_offset": offset,
-            "start_time_from": f"{fecha_inicio}T00:00:00Z",
-            "start_time_to": f"{fecha_fin}T23:59:59Z",
+            "filter": filtro,
         }
 
         r = requests.get(
@@ -88,7 +94,6 @@ def get_calls(fecha_inicio, fecha_fin):
 
     st.write("Llamadas descargadas:", len(llamadas))
     return llamadas
-
 
 def normalizar_llamada(call):
     user = call.get("user") or {}
