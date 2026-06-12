@@ -60,7 +60,14 @@ def get_calls(fecha_inicio, fecha_fin):
             st.text(r.text[:3000])
             st.stop()
 
-        batch = r.json().get("call_list", [])
+        data = r.json()
+
+        st.write("KEYS:", list(data.keys()))
+        st.write("TOTAL CALL COUNT:", data.get("total_call_count"))
+        st.write("CALL LIST COUNT:", data.get("call_list_count"))
+        st.write("OFFSET:", offset)
+
+        batch = data.get("call_list", [])
 
         if not batch:
             break
