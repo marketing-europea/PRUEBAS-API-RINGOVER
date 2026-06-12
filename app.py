@@ -8,11 +8,14 @@ import pandas as pd
 import streamlit as st
 
 
-API_KEY = "9100d3646e618b7526417ada74853f620bcfa288"
-BASE_URL = "https://public-api.ringover.com/v2"
-HEADERS = {"Authorization": API_KEY}
-
-VENTAS_IVR_ID = 11861068
+DASHBOARD_TOKEN = "9100d3646e618b7526417ada74853f620bcfa288"
+DASHBOARD_URL = "https://api-eu.ringover.com/v4/aud/dashboard/currents/calls"
+VENTAS_IVR_ID = 11851068
+DASHBOARD_HEADERS = {
+    "Authorization": f"Bearer {DASHBOARD_TOKEN}",
+    "Content-Type": "application/json",
+    "Accept": "*/*",
+}
 
 st.title("KPIs Ringover - Ventas")
 
