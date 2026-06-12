@@ -11,12 +11,19 @@ HEADERS = {
 }
 
 def get_json(endpoint, params=None):
+    url = f"{BASE_URL}{endpoint}"
+
     r = requests.get(
-        f"{BASE_URL}{endpoint}",
+        url,
         headers=HEADERS,
         params=params or {},
         timeout=30
     )
+
+    print("URL:", r.url)
+    print("STATUS:", r.status_code)
+    print("RESPUESTA:", r.text[:2000])
+
     r.raise_for_status()
     return r.json()
 
