@@ -12,7 +12,6 @@ API_KEY = "9100d3646e618b7526417ada74853f620bcfa288"
 BASE_URL = "https://public-api.ringover.com/v2"
 HEADERS = {"Authorization": API_KEY}
 
-
 st.title("KPIs Ringover - Ventas")
 
 fecha_inicio = st.date_input("Fecha inicio")
@@ -44,22 +43,19 @@ def get_calls(fecha_inicio, fecha_fin):
     offset = 0
     limit = 100
 
-    filtro = (
-        f"start_time>={fecha_inicio}T00:00:00Z;"
-        f"start_time<={fecha_fin}T23:59:59Z"
-    )
+    inicio_dt = datetime.combine(fecha_inicio, dtime.min).replace(tzinfo=timezone.utc)
+    fin_dt = datetime.combine(fecha_fin, dtime.max).replace(tzinfo=timezone.utc)
+
+    progreso = st.empty()
 
     while True:
-        params = {
-            "limit_count": limit,
-            "limit_offset": offset,
-            "filter": filtro,
-        }
-
         r = requests.get(
             f"{BASE_URL}/calls",
             headers=HEADERS,
-            params=params,
+            params={
+                "limit_count": limit,
+                "limit_offset": offset,
+            },
             timeout=30
         )
 
@@ -71,23 +67,38 @@ def get_calls(fecha_inicio, fecha_fin):
         data = r.json()
         batch = data.get("call_list", [])
 
-        st.write("OFFSET:", offset)
-        st.write("TOTAL:", data.get("total_call_count"))
-        st.write("BATCH:", len(batch))
-
         if not batch:
             break
 
-        llamadas.extend(batch)
+        fechas_batch = []
+
+        for call in batch:
+            start_time = parse_fecha_ringover(call.get("start_time"))
+
+            if not start_time:
+                continue
+
+            fechas_batch.append(start_time)
+
+            if inicio_dt <= start_time <= fin_dt:
+                llamadas.append(call)
+
+        progreso.write(
+            f"Revisando llamadas... offset {offset} | encontradas en rango: {len(llamadas)}"
+        )
 
         if len(batch) < limit:
+            break
+
+        if fechas_batch and min(fechas_batch) < inicio_dt:
             break
 
         offset += limit
         time.sleep(0.55)
 
-    st.write("LLAMADAS DESCARGADAS:", len(llamadas))
+    progreso.empty()
     return llamadas
+
 
 def normalizar_llamada(call):
     user = call.get("user") or {}
@@ -135,18 +146,18 @@ def buscar_match_agente(agente, df_config):
     return None
 
 
-def asignar_horario(agente, df_agentes_horario):
-    row = buscar_match_agente(agente, df_agentes_horario)
-    if row is None:
-        return None
-    return int(row["horario_id"])
-
-
 def valor_columna(row, columnas, defecto=0):
     for col in columnas:
         if col in row and pd.notna(row[col]):
             return row[col]
     return defecto
+
+
+def asignar_horario(agente, df_agentes_horario):
+    row = buscar_match_agente(agente, df_agentes_horario)
+    if row is None:
+        return None
+    return int(row["horario_id"])
 
 
 def obtener_manual(agente, df_manual):
@@ -165,14 +176,17 @@ def obtener_manual(agente, df_manual):
 def contar_dias_tipo(fecha_inicio, fecha_fin, horario_id):
     dias = pd.date_range(fecha_inicio, fecha_fin, freq="D")
 
+    # Horarios con Día A lunes-jueves y Día B viernes
     if horario_id in [1, 3, 4, 6, 7]:
         dias_a = sum(d.weekday() in [0, 1, 2, 3] for d in dias)
         dias_b = sum(d.weekday() == 4 for d in dias)
 
+    # Toñi: lunes-viernes todo Día A
     elif horario_id == 2:
         dias_a = sum(d.weekday() in [0, 1, 2, 3, 4] for d in dias)
         dias_b = 0
 
+    # Solvo: lunes-sábado todo Día A
     elif horario_id == 5:
         dias_a = sum(d.weekday() in [0, 1, 2, 3, 4, 5] for d in dias)
         dias_b = 0
@@ -208,14 +222,7 @@ def calcular_horas(agente, fecha_inicio, fecha_fin, df_horarios, df_agentes_hora
         + dias_b * float(horario["horas_dia_b"])
     )
 
-    return (
-        horas,
-        horario_id,
-        dias_a,
-        dias_b,
-        manual["vacaciones_a"],
-        manual["vacaciones_b"],
-    )
+    return horas, horario_id, dias_a, dias_b, manual["vacaciones_a"], manual["vacaciones_b"]
 
 
 def calcular_kpis(llamadas_raw, ivr_name, fecha_inicio, fecha_fin, df_horarios, df_agentes_horario, df_manual):
@@ -263,10 +270,10 @@ def calcular_kpis(llamadas_raw, ivr_name, fecha_inicio, fecha_fin, df_horarios, 
         manual = obtener_manual(agente, df_manual)
         polizas = manual["polizas"]
 
-        calls_h = total_llamadas / horas if horas else 0
-        mid_time = total_tiempo / total_llamadas if total_llamadas else 0
-        polizas_h = polizas / horas if horas else 0
         contactab = conectadas / call_out if call_out else 0
+        mid_time = total_tiempo / total_llamadas if total_llamadas else 0
+        indice_productividad = total_llamadas / horas if horas else 0
+        indice_efectividad = polizas / horas if horas else 0
 
         resultados.append({
             "Agente": agente,
@@ -286,14 +293,37 @@ def calcular_kpis(llamadas_raw, ivr_name, fecha_inicio, fecha_fin, df_horarios, 
             "Contestadas": contestadas_n,
             "Mid Calls": mid_time,
             "Pólizas": polizas,
-            "Pólizas/h": polizas_h,
-            "Calls/h": calls_h,
+            "Índice efectividad": indice_efectividad,
+            "Índice productividad": indice_productividad,
             "Mid time": mid_time,
-            "Índice productividad": calls_h,
-            "Índice efectividad": mid_time,
         })
 
-    return pd.DataFrame(resultados).sort_values("Agente"), df_ventas
+    kpis = pd.DataFrame(resultados).sort_values("Agente")
+
+    columnas = [
+        "Agente",
+        "user_id",
+        "horario_id",
+        "Vacaciones A",
+        "Vacaciones B",
+        "Días A",
+        "Días B",
+        "Horas",
+        "Call in",
+        "Call out",
+        "Conectadas",
+        "Contactab.",
+        "Time in",
+        "Time out",
+        "Contestadas",
+        "Mid Calls",
+        "Pólizas",
+        "Índice efectividad",
+        "Índice productividad",
+        "Mid time",
+    ]
+
+    return kpis[columnas], df_ventas
 
 
 if st.button("Generar KPIs"):
@@ -311,6 +341,8 @@ if st.button("Generar KPIs"):
 
     with st.spinner("Descargando llamadas de Ringover..."):
         llamadas_raw = get_calls(fecha_inicio, fecha_fin)
+
+    st.write("Llamadas descargadas en el rango:", len(llamadas_raw))
 
     kpis, llamadas_ventas = calcular_kpis(
         llamadas_raw,
