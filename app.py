@@ -45,21 +45,23 @@ def get_calls(fecha_inicio, fecha_fin):
     offset = 0
     limit = 100
 
-    inicio_dt = datetime.combine(fecha_inicio, dtime.min).replace(tzinfo=timezone.utc)
-    fin_dt = datetime.combine(fecha_fin, dtime.max).replace(tzinfo=timezone.utc)
-
-    progreso = st.empty()
-
     while True:
+        params = {
+            "limit_count": limit,
+            "limit_offset": offset,
+            "start_time_from": f"{fecha_inicio}T00:00:00Z",
+            "start_time_to": f"{fecha_fin}T23:59:59Z",
+        }
+
         r = requests.get(
             f"{BASE_URL}/calls",
             headers=HEADERS,
-            params={
-                "limit_count": limit,
-                "limit_offset": offset,
-            },
+            params=params,
             timeout=30
         )
+
+        st.write("URL:", r.url)
+        st.write("STATUS:", r.status_code)
 
         if r.status_code != 200:
             st.error(f"Error Ringover {r.status_code}")
@@ -69,36 +71,22 @@ def get_calls(fecha_inicio, fecha_fin):
         data = r.json()
         batch = data.get("call_list", [])
 
+        st.write("TOTAL:", data.get("total_call_count"))
+        st.write("BATCH:", len(batch))
+        st.write("OFFSET:", offset)
+
         if not batch:
             break
 
-        fechas_batch = []
-
-        for call in batch:
-            start_time = parse_fecha_ringover(call.get("start_time"))
-
-            if not start_time:
-                continue
-
-            fechas_batch.append(start_time)
-
-            if inicio_dt <= start_time <= fin_dt:
-                llamadas.append(call)
-
-        progreso.write(
-            f"Revisando llamadas... offset {offset} | llamadas en rango: {len(llamadas)}"
-        )
+        llamadas.extend(batch)
 
         if len(batch) < limit:
-            break
-
-        if fechas_batch and min(fechas_batch) < inicio_dt:
             break
 
         offset += limit
         time.sleep(0.55)
 
-    progreso.empty()
+    st.write("Llamadas descargadas:", len(llamadas))
     return llamadas
 
 
