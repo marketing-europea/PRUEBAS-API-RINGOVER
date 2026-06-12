@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 
-API_KEY = "TU_API_KEY_REAL"
+API_KEY = "9100d3646e618b7526417ada74853f620bcfa288"
 BASE_URL = "https://public-api.ringover.com/v2"
 HEADERS = {"Authorization": API_KEY}
 
