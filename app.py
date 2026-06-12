@@ -9,7 +9,7 @@ import streamlit as st
 
 
 API_KEY = "9100d3646e618b7526417ada74853f620bcfa288"
-BASE_URL = "https://public-api.ringover.com/v2"
+BASE_URL = "https://public-api.ringover.com/v2/calls/list"
 HEADERS = {"Authorization": API_KEY}
 
 VENTAS_IVR_ID = 11861068
@@ -45,36 +45,34 @@ def get_calls(fecha_inicio, fecha_fin):
     offset = 0
     limit = 100
 
-    filtro = f"start_time:{fecha_inicio}T00:00:00Z..{fecha_fin}T23:59:59Z ivr_id:{VENTAS_IVR_ID}"
-
     while True:
-        params = {
+        payload = {
             "limit_count": limit,
             "limit_offset": offset,
-            "filter": filtro,
+            "start_date": f"{fecha_inicio}T00:00:00Z",
+            "end_date": f"{fecha_fin}T23:59:59Z",
+            "ivrs": [11861068]
         }
 
-        r = requests.get(
-            f"{BASE_URL}/calls",
-            headers=HEADERS,
-            params=params,
+        r = requests.post(
+            f"{BASE_URL}/calls/list",
+            headers={
+                "Authorization": API_KEY,
+                "Content-Type": "application/json"
+            },
+            json=payload,
             timeout=30
         )
 
-        st.write("URL:", r.url)
         st.write("STATUS:", r.status_code)
+        st.write("RESP:", r.text[:500])
 
         if r.status_code != 200:
             st.error(f"Error Ringover {r.status_code}")
-            st.text(r.text[:3000])
             st.stop()
 
         data = r.json()
         batch = data.get("call_list", [])
-
-        st.write("TOTAL API:", data.get("total_call_count"))
-        st.write("BATCH:", len(batch))
-        st.write("OFFSET:", offset)
 
         if not batch:
             break
@@ -87,7 +85,7 @@ def get_calls(fecha_inicio, fecha_fin):
         offset += limit
         time.sleep(0.55)
 
-    st.write("LLAMADAS DESCARGADAS:", len(llamadas))
+    st.write("Llamadas descargadas:", len(llamadas))
     return llamadas
 
 def normalizar_llamada(call):
