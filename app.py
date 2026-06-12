@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 
-API_KEY = "9100d3646e618b7526417ada74853f620bcfa288"
+API_KEY = "TU_API_KEY_REAL"
 BASE_URL = "https://public-api.ringover.com/v2"
 HEADERS = {"Authorization": API_KEY}
 
@@ -138,6 +138,13 @@ def asignar_horario(agente, df_agentes_horario):
     return int(row["horario_id"])
 
 
+def valor_columna(row, columnas, defecto=0):
+    for col in columnas:
+        if col in row and pd.notna(row[col]):
+            return row[col]
+    return defecto
+
+
 def obtener_manual(agente, df_manual):
     row = buscar_match_agente(agente, df_manual)
 
@@ -145,9 +152,9 @@ def obtener_manual(agente, df_manual):
         return {"vacaciones_a": 0, "vacaciones_b": 0, "polizas": 0}
 
     return {
-        "vacaciones_a": float(row.get("vacaciones_a", 0) or 0),
-        "vacaciones_b": float(row.get("vacaciones_b", 0) or 0),
-        "polizas": float(row.get("polizas", 0) or 0),
+        "vacaciones_a": float(valor_columna(row, ["vacaciones_a", "dias_a"], 0) or 0),
+        "vacaciones_b": float(valor_columna(row, ["vacaciones_b", "dias_b"], 0) or 0),
+        "polizas": float(valor_columna(row, ["polizas", "pólizas"], 0) or 0),
     }
 
 
@@ -231,7 +238,6 @@ def calcular_kpis(llamadas_raw, ivr_name, fecha_inicio, fecha_fin, df_horarios, 
 
         call_in = len(entrantes)
         call_out = len(salientes)
-
         conectadas = len(salientes_conectadas)
         contestadas_n = len(contestadas)
 
@@ -253,6 +259,11 @@ def calcular_kpis(llamadas_raw, ivr_name, fecha_inicio, fecha_fin, df_horarios, 
         manual = obtener_manual(agente, df_manual)
         polizas = manual["polizas"]
 
+        calls_h = total_llamadas / horas if horas else 0
+        mid_time = total_tiempo / total_llamadas if total_llamadas else 0
+        polizas_h = polizas / horas if horas else 0
+        contactab = conectadas / call_out if call_out else 0
+
         resultados.append({
             "Agente": agente,
             "user_id": user_id,
@@ -265,14 +276,17 @@ def calcular_kpis(llamadas_raw, ivr_name, fecha_inicio, fecha_fin, df_horarios, 
             "Call in": call_in,
             "Call out": call_out,
             "Conectadas": conectadas,
-            "Contactab.": conectadas / call_out if call_out else 0,
+            "Contactab.": contactab,
             "Time in": time_in,
             "Time out": time_out,
             "Contestadas": contestadas_n,
-            "Mid Calls": total_tiempo / total_llamadas if total_llamadas else 0,
+            "Mid Calls": mid_time,
             "Pólizas": polizas,
-            "Pólizas/h": polizas / horas if horas else 0,
-            "Calls/h": total_llamadas / horas if horas else 0,
+            "Pólizas/h": polizas_h,
+            "Calls/h": calls_h,
+            "Mid time": mid_time,
+            "Índice productividad": calls_h,
+            "Índice efectividad": mid_time,
         })
 
     return pd.DataFrame(resultados).sort_values("Agente"), df_ventas
