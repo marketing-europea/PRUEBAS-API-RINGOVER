@@ -1,6 +1,6 @@
 import requests
 
-API_KEY = "9100d3646e618b7526417ada74853f620bcfa288"
+API_KEY = "TU_API_KEY"
 
 r = requests.get(
     "https://public-api.ringover.com/v2/calls",
@@ -13,6 +13,6 @@ r = requests.get(
 )
 
 print("STATUS:", r.status_code)
-print("CONTENT-TYPE:", r.headers.get("Content-Type"))
+print("CONTENT TYPE:", r.headers.get("content-type"))
 print("RESPUESTA:")
 print(r.text[:5000])
