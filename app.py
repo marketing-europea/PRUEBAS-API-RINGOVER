@@ -195,48 +195,51 @@ def calcular_kpis(llamadas_raw, ivr_name, fecha_inicio, fecha_fin, df_horarios, 
     resultados = []
 
     for (user_id, agente), sub in df_ventas.groupby(["user_id", "Agente"], dropna=False):
-        entrantes = sub[sub["direction"].isin(["in", "incoming", "inbound"])]
-        salientes = sub[sub["direction"].isin(["out", "outgoing", "outbound"])]
-        salientes_conectadas = salientes[salientes["is_answered"] == True]
-        contestadas = sub[sub["is_answered"] == True]
+    entrantes = sub[sub["direction"].isin(["in", "incoming", "inbound"])]
+    salientes = sub[sub["direction"].isin(["out", "outgoing", "outbound"])]
 
-        call_in = len(entrantes)
-        call_out = len(salientes)
-        conectadas = len(salientes_conectadas)
-        contestadas_n = len(contestadas)
+    salientes_conectadas = salientes[salientes["is_answered"] == True]
+    contestadas = sub[sub["is_answered"] == True]
 
-        time_in = entrantes["incall_duration_min"].sum()
-        time_out = salientes["incall_duration_min"].sum()
+    call_in = len(entrantes)
+    call_out = len(salientes)
 
-        total_llamadas = call_in + call_out
-        total_tiempo = time_in + time_out
+    conectadas = len(salientes_conectadas)
+    contestadas_n = len(contestadas)
 
-        horas, horario_id, dias_a, dias_b = calcular_horas(
-            agente, fecha_inicio, fecha_fin, df_horarios, df_agentes_horario, df_manual
-        )
+    # IMPORTANTE: usar duración total para cuadrar con Ringover
+    time_in = entrantes["total_duration_min"].sum()
+    time_out = salientes["total_duration_min"].sum()
 
-        manual = obtener_manual(agente, df_manual)
-        polizas = manual["polizas"]
+    total_llamadas = call_in + call_out
+    total_tiempo = time_in + time_out
 
-        resultados.append({
-            "Agente": agente,
-            "user_id": user_id,
-            "horario_id": horario_id,
-            "Días A": dias_a,
-            "Días B": dias_b,
-            "Horas": horas,
-            "Call in": call_in,
-            "Call out": call_out,
-            "Conectadas": conectadas,
-            "Contactab.": conectadas / call_out if call_out else 0,
-            "Time in": time_in,
-            "Time out": time_out,
-            "Contestadas": contestadas_n,
-            "Mid Calls": total_tiempo / total_llamadas if total_llamadas else 0,
-            "Pólizas": polizas,
-            "Pólizas/h": polizas / horas if horas else 0,
-            "Calls/h": total_llamadas / horas if horas else 0,
-        })
+    horas, horario_id, dias_a, dias_b = calcular_horas(
+        agente, fecha_inicio, fecha_fin, df_horarios, df_agentes_horario, df_manual
+    )
+
+    manual = obtener_manual(agente, df_manual)
+    polizas = manual["polizas"]
+
+    resultados.append({
+        "Agente": agente,
+        "user_id": user_id,
+        "horario_id": horario_id,
+        "Días A": dias_a,
+        "Días B": dias_b,
+        "Horas": horas,
+        "Call in": call_in,
+        "Call out": call_out,
+        "Conectadas": conectadas,
+        "Contactab.": conectadas / call_out if call_out else 0,
+        "Time in": time_in,
+        "Time out": time_out,
+        "Contestadas": contestadas_n,
+        "Mid Calls": total_tiempo / total_llamadas if total_llamadas else 0,
+        "Pólizas": polizas,
+        "Pólizas/h": polizas / horas if horas else 0,
+        "Calls/h": total_llamadas / horas if horas else 0,
+    })
 
     return pd.DataFrame(resultados).sort_values("Agente"), df_ventas
 
