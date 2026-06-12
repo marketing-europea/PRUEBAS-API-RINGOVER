@@ -45,29 +45,21 @@ def get_calls(fecha_inicio, fecha_fin):
     offset = 0
     limit = 100
 
-    filtro = {
-        "start_time": {
-            "from": f"{fecha_inicio}T00:00:00Z",
-            "to": f"{fecha_fin}T23:59:59Z"
-        }
-    }
+    inicio_dt = datetime.combine(fecha_inicio, dtime.min).replace(tzinfo=timezone.utc)
+    fin_dt = datetime.combine(fecha_fin, dtime.max).replace(tzinfo=timezone.utc)
+
+    progreso = st.empty()
 
     while True:
-        params = {
-            "limit_count": limit,
-            "limit_offset": offset,
-            "filter": filtro,
-        }
-
         r = requests.get(
             f"{BASE_URL}/calls",
             headers=HEADERS,
-            params=params,
+            params={
+                "limit_count": limit,
+                "limit_offset": offset,
+            },
             timeout=30
         )
-
-        st.write("URL:", r.url)
-        st.write("STATUS:", r.status_code)
 
         if r.status_code != 200:
             st.error(f"Error Ringover {r.status_code}")
@@ -76,23 +68,30 @@ def get_calls(fecha_inicio, fecha_fin):
 
         data = r.json()
         batch = data.get("call_list", [])
-
-        st.write("TOTAL:", data.get("total_call_count"))
-        st.write("BATCH:", len(batch))
-        st.write("OFFSET:", offset)
+        total = data.get("total_call_count", 0)
 
         if not batch:
             break
 
-        llamadas.extend(batch)
+        for call in batch:
+            start_time = parse_fecha_ringover(call.get("start_time"))
 
-        if len(batch) < limit:
-            break
+            if start_time and inicio_dt <= start_time <= fin_dt:
+                llamadas.append(call)
+
+        progreso.write(
+            f"Descargando llamadas... offset {offset} / total {total} | en rango: {len(llamadas)}"
+        )
 
         offset += limit
+
+        # IMPORTANTE: no cortar por fechas, porque Ringover no siempre devuelve orden perfecto
+        if offset >= total:
+            break
+
         time.sleep(0.55)
 
-    st.write("Llamadas descargadas:", len(llamadas))
+    progreso.empty()
     return llamadas
 
 def normalizar_llamada(call):
